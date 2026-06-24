@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 
+from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -16,10 +19,46 @@ from telegram.ext import (
 from .config import Settings, get_settings, load_admins
 from .db import Database
 from .handlers import callbacks, commands, media
-from .services import SERVICES_KEY, Services
+from .services import SERVICES_KEY, Services, get_services_from_bot_data
 from .transcription.factory import get_transcriber
 
 logger = logging.getLogger(__name__)
+
+# Commands shown when typing "/" — base set for every user.
+_USER_COMMANDS = [
+    BotCommand("start", "Avvia il bot / richiedi accesso"),
+    BotCommand("help", "Mostra i comandi disponibili"),
+    BotCommand("settings", "Modello, lingua e streaming"),
+    BotCommand("status", "Mostra stato e impostazioni"),
+]
+
+# Extra commands shown only to admins (in their private chat with the bot).
+_ADMIN_COMMANDS = _USER_COMMANDS + [
+    BotCommand("requests", "Richieste di accesso in attesa"),
+    BotCommand("approve", "Approva un utente: /approve <id>"),
+    BotCommand("deny", "Rifiuta un utente: /deny <id>"),
+    BotCommand("users", "Elenco utenti approvati"),
+    BotCommand("revoke", "Revoca l'accesso: /revoke <id>"),
+]
+
+
+async def _post_init(application: Application) -> None:
+    """Register the command list with Telegram so it appears under "/".
+
+    Base commands go to the default scope (all users); the full admin set is
+    scoped to each admin's private chat. Per-admin calls are best-effort: they
+    fail harmlessly if an admin has never opened a chat with the bot.
+    """
+
+    await application.bot.set_my_commands(
+        _USER_COMMANDS, scope=BotCommandScopeDefault()
+    )
+    admins = get_services_from_bot_data(application.bot_data).admins
+    for admin_id in admins:
+        with suppress(TelegramError):
+            await application.bot.set_my_commands(
+                _ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id)
+            )
 
 
 def build_application(settings: Settings) -> Application:
@@ -45,7 +84,12 @@ def build_application(settings: Settings) -> Application:
             settings.admins_file,
         )
 
-    application = ApplicationBuilder().token(settings.telegram_bot_token).build()
+    application = (
+        ApplicationBuilder()
+        .token(settings.telegram_bot_token)
+        .post_init(_post_init)
+        .build()
+    )
     application.bot_data[SERVICES_KEY] = services
 
     # Commands.

@@ -31,11 +31,16 @@ class Services:
     transcriber: Transcriber
 
 
-def get_services(context: "ContextTypes.DEFAULT_TYPE") -> Services:
-    """Retrieve the shared :class:`Services` bundle from a handler context."""
+def get_services_from_bot_data(bot_data: dict[str, Any]) -> Services:
+    """Retrieve the shared :class:`Services` bundle from a raw ``bot_data`` dict."""
 
-    bot_data: dict[str, Any] = context.application.bot_data
     services = bot_data.get(SERVICES_KEY)
     if not isinstance(services, Services):  # pragma: no cover - wiring guard
         raise RuntimeError("Services not initialised in bot_data")
     return services
+
+
+def get_services(context: "ContextTypes.DEFAULT_TYPE") -> Services:
+    """Retrieve the shared :class:`Services` bundle from a handler context."""
+
+    return get_services_from_bot_data(context.application.bot_data)
