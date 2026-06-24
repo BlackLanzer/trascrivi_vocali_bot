@@ -10,6 +10,7 @@ from telegram import Message, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from ..keyboards import stop_streaming_keyboard
 from ..security import require_auth
 from ..services import get_services
 from ..transcription.base import Transcriber, TranscriptionConfig
@@ -19,6 +20,23 @@ logger = logging.getLogger(__name__)
 # Telegram limits.
 MAX_MESSAGE_LENGTH = 4096
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024  # Bot API download cap.
+
+# Registry (in ``context.bot_data``) of in-flight streaming transcriptions,
+# keyed by (chat_id, placeholder.message_id). The "stop" button looks up the
+# matching Event and sets it so ``_run_streaming`` can break out cooperatively.
+ACTIVE_STREAMS_KEY = "active_streams"
+
+
+def _active_streams(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> dict[tuple[int, int], asyncio.Event]:
+    """Return the active-streams registry, lazily creating it in ``bot_data``."""
+
+    streams = context.bot_data.get(ACTIVE_STREAMS_KEY)
+    if streams is None:
+        streams = {}
+        context.bot_data[ACTIVE_STREAMS_KEY] = streams
+    return streams
 
 # Live streaming: don't edit the placeholder more than once per second, and give
 # the whole streaming operation a generous upper bound.
@@ -46,9 +64,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await message.reply_text("Il file è troppo grande (massimo 20 MB).")
         return
 
-    # 1) Immediate silent acknowledgement (no notification).
-    placeholder = await message.reply_text(_RECEIVED_TEXT, disable_notification=True)
-
     services = get_services(context)
     transcriber = services.transcriber
     user_settings = services.db.get_settings(user.id)
@@ -56,6 +71,15 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         model=user_settings.model, language=user_settings.language
     )
     mimetype = media.mime_type
+    use_streaming = user_settings.streaming and transcriber.supports_streaming(mimetype)
+
+    # 1) Immediate silent acknowledgement (no notification). Streaming gets a
+    #    "stop" button; the pre-recorded path stays button-less.
+    placeholder = await message.reply_text(
+        _RECEIVED_TEXT,
+        disable_notification=True,
+        reply_markup=stop_streaming_keyboard() if use_streaming else None,
+    )
 
     # 2) Download the audio bytes.
     try:
@@ -67,13 +91,25 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     # 3) Transcribe (streaming when enabled and supported, else pre-recorded).
-    use_streaming = user_settings.streaming and transcriber.supports_streaming(mimetype)
     try:
         if use_streaming:
-            final_text = await asyncio.wait_for(
-                _run_streaming(placeholder, audio_bytes, config, transcriber, mimetype),
-                timeout=_STREAM_TIMEOUT,
-            )
+            stop_event = asyncio.Event()
+            stream_key = (placeholder.chat_id, placeholder.message_id)
+            _active_streams(context)[stream_key] = stop_event
+            try:
+                final_text = await asyncio.wait_for(
+                    _run_streaming(
+                        placeholder,
+                        audio_bytes,
+                        config,
+                        transcriber,
+                        mimetype,
+                        stop_event,
+                    ),
+                    timeout=_STREAM_TIMEOUT,
+                )
+            finally:
+                _active_streams(context).pop(stream_key, None)
         else:
             result = await transcriber.transcribe_file(audio_bytes, config, mimetype)
             final_text = result.text
@@ -97,12 +133,17 @@ async def _run_streaming(
     config: TranscriptionConfig,
     transcriber: Transcriber,
     mimetype: str | None,
+    stop_event: asyncio.Event,
 ) -> str:
     """Edit the placeholder live as interim transcripts arrive; return the final text.
 
     Deepgram sends growing interim results per segment, then a final result that
     settles the segment. We keep the settled parts and append the current interim
     for display, throttling edits to respect Telegram's rate limits.
+
+    ``stop_event`` lets the user stop early via the inline button: we check it at
+    the top of each loop and break, then close the generator so the underlying
+    Deepgram socket shuts down promptly, returning whatever was collected so far.
     """
 
     final_parts: list[str] = []
@@ -111,21 +152,33 @@ async def _run_streaming(
     last_edit = 0.0
     loop = asyncio.get_event_loop()
 
-    async for event in transcriber.transcribe_stream(audio, config, mimetype):
-        if event.is_final:
-            if event.text:
-                final_parts.append(event.text)
-            interim = ""
-        else:
-            interim = event.text
+    agen = transcriber.transcribe_stream(audio, config, mimetype)
+    try:
+        async for event in agen:
+            if stop_event.is_set():
+                break
 
-        shown = " ".join([*final_parts, interim]).strip()
-        now = loop.time()
-        if shown and shown != last_shown and (now - last_edit) >= _EDIT_INTERVAL:
-            with suppress(TelegramError):
-                await placeholder.edit_text(shown[:MAX_MESSAGE_LENGTH])
-            last_shown = shown
-            last_edit = now
+            if event.is_final:
+                if event.text:
+                    final_parts.append(event.text)
+                interim = ""
+            else:
+                interim = event.text
+
+            shown = " ".join([*final_parts, interim]).strip()
+            now = loop.time()
+            if shown and shown != last_shown and (now - last_edit) >= _EDIT_INTERVAL:
+                with suppress(TelegramError):
+                    await placeholder.edit_text(
+                        shown[:MAX_MESSAGE_LENGTH],
+                        reply_markup=stop_streaming_keyboard(),
+                    )
+                last_shown = shown
+                last_edit = now
+    finally:
+        # Close the generator so the underlying ``async with ...connect()``
+        # socket is torn down promptly when we stop iterating early.
+        await agen.aclose()
 
     return " ".join(final_parts).strip()
 

@@ -110,6 +110,9 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(
         CallbackQueryHandler(callbacks.access_callback, pattern=r"^req:")
     )
+    application.add_handler(
+        CallbackQueryHandler(callbacks.stop_streaming_callback, pattern=r"^stream:")
+    )
 
     # The core flow: voice notes and audio files.
     application.add_handler(

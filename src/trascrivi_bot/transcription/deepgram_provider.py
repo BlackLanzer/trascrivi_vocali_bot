@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import suppress
 
 from deepgram import AsyncDeepgramClient
@@ -84,7 +84,7 @@ class DeepgramTranscriber(Transcriber):
 
     async def transcribe_stream(  # type: ignore[override]
         self, audio: bytes, config: TranscriptionConfig, mimetype: str | None = None
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncGenerator[StreamEvent, None]:
         async with self._client.listen.v1.connect(
             model=config.model,
             language=config.language,

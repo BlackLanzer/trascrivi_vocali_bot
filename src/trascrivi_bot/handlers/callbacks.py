@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 
-from telegram import Update
+from telegram import Message, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
@@ -15,6 +16,7 @@ from ..keyboards import (
     main_settings_keyboard,
     model_keyboard,
 )
+from ..handlers.media import ACTIVE_STREAMS_KEY
 from ..models import AccessStatus
 from ..security import is_admin, is_authorized
 from ..services import get_services
@@ -119,6 +121,33 @@ async def access_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     with suppress(TelegramError):
         await context.bot.send_message(chat_id=target_id, text=user_text)
+
+
+async def stop_streaming_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle the "stop streaming" button (``stream:stop`` callback data).
+
+    Looks up the active-stream Event for this placeholder message and sets it so
+    ``_run_streaming`` breaks out cooperatively. Robust if the stream already
+    finished or the entry is missing — we always acknowledge the tap.
+    """
+
+    query = update.callback_query
+    if query is None:
+        return
+
+    message = query.message
+    if isinstance(message, Message):
+        key = (message.chat_id, message.message_id)
+        streams: dict[tuple[int, int], asyncio.Event] = context.bot_data.get(
+            ACTIVE_STREAMS_KEY, {}
+        )
+        stop_event = streams.get(key)
+        if stop_event is not None:
+            stop_event.set()
+
+    await query.answer("Interrompo…")
 
 
 async def _show_main_menu(query, db, transcriber, user_id: int) -> None:  # type: ignore[no-untyped-def]

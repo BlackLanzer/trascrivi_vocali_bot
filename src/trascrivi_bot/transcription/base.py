@@ -7,7 +7,7 @@ registering it in ``factory.py`` — nothing else in the bot needs to change.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 
@@ -74,7 +74,7 @@ class Transcriber(ABC):
 
     def transcribe_stream(
         self, audio: bytes, config: TranscriptionConfig, mimetype: str | None = None
-    ) -> AsyncIterator[StreamEvent]:
+    ) -> AsyncGenerator[StreamEvent, None]:
         """Stream interim/final transcripts for a complete audio file.
 
         Implementations are async generators. The default raises, so providers

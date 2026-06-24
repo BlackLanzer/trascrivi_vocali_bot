@@ -89,6 +89,14 @@ def language_keyboard(settings: UserSettings, transcriber: Transcriber) -> Inlin
     return InlineKeyboardMarkup(rows)
 
 
+def stop_streaming_keyboard() -> InlineKeyboardMarkup:
+    """Single "stop" button shown on the live streaming placeholder."""
+
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⏹ Ferma", callback_data="stream:stop")]]
+    )
+
+
 def access_request_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Approve/deny buttons attached to an admin's view of a request."""
 
