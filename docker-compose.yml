@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    image: trascrivi-bot
+    container_name: trascrivi-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Persist the SQLite database and the admins file across rebuilds.
+      - ./data:/app/data
+      - ./config:/app/config
+    # Polling mode needs no inbound ports.

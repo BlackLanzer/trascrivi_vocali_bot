@@ -1,0 +1,41 @@
+"""Shared services wired at startup and reachable from every handler.
+
+The single :class:`Services` instance is stored in ``application.bot_data`` so
+handlers can fetch it (typed) via :func:`get_services` instead of poking at the
+untyped ``bot_data`` dict.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from .config import Settings
+from .db import Database
+from .transcription.base import Transcriber
+
+if TYPE_CHECKING:
+    from telegram.ext import ContextTypes
+
+# Key under which the Services bundle is stored in bot_data.
+SERVICES_KEY = "services"
+
+
+@dataclass(slots=True)
+class Services:
+    """Everything a handler might need, assembled once in ``main``."""
+
+    settings: Settings
+    db: Database
+    admins: set[int]
+    transcriber: Transcriber
+
+
+def get_services(context: "ContextTypes.DEFAULT_TYPE") -> Services:
+    """Retrieve the shared :class:`Services` bundle from a handler context."""
+
+    bot_data: dict[str, Any] = context.application.bot_data
+    services = bot_data.get(SERVICES_KEY)
+    if not isinstance(services, Services):  # pragma: no cover - wiring guard
+        raise RuntimeError("Services not initialised in bot_data")
+    return services

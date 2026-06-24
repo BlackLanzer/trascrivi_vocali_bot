@@ -1,0 +1,7 @@
+# Admin Telegram user IDs — one numeric ID per line.
+# Lines starting with '#' and blank lines are ignored.
+# Find your own ID by messaging @userinfobot on Telegram.
+#
+# Copy this file to admins.txt and add the real IDs:
+#   123456789
+#   987654321

@@ -1,0 +1,14 @@
+# Secrets and runtime state
+.env
+data/*.db
+data/*.db-journal
+config/admins.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
