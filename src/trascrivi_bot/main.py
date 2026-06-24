@@ -29,6 +29,9 @@ _USER_COMMANDS = [
     BotCommand("start", "Avvia il bot / richiedi accesso"),
     BotCommand("help", "Mostra i comandi disponibili"),
     BotCommand("settings", "Modello, lingua e streaming"),
+    BotCommand("model", "Mostra o cambia il modello"),
+    BotCommand("language", "Mostra o cambia la lingua"),
+    BotCommand("streaming", "Attiva/disattiva lo streaming"),
     BotCommand("status", "Mostra stato e impostazioni"),
 ]
 
@@ -96,6 +99,9 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("start", commands.start))
     application.add_handler(CommandHandler("help", commands.help_command))
     application.add_handler(CommandHandler("settings", commands.settings_command))
+    application.add_handler(CommandHandler("model", commands.model_command))
+    application.add_handler(CommandHandler("language", commands.language_command))
+    application.add_handler(CommandHandler("streaming", commands.streaming_command))
     application.add_handler(CommandHandler("status", commands.status_command))
     application.add_handler(CommandHandler("requests", commands.requests_command))
     application.add_handler(CommandHandler("approve", commands.approve_command))

@@ -19,6 +19,7 @@ from ..keyboards import (
 from ..models import AccessStatus
 from ..security import is_admin, is_authorized, require_admin, require_auth
 from ..services import Services, get_services
+from ..transcription.base import LanguageOption, ModelOption
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start – avvia il bot",
         "/help – mostra questo messaggio",
         "/settings – modello, lingua e streaming",
+        "/model – mostra o cambia il modello",
+        "/language – mostra o cambia la lingua",
+        "/streaming – attiva/disattiva lo streaming",
         "/status – mostra le tue impostazioni e il tuo stato",
         "",
         "Inviami un messaggio vocale o un file audio per trascriverlo.",
@@ -131,6 +135,123 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"Lingua: {language_label(transcriber, user_settings.language)}\n"
         f"Streaming: {streaming}"
     )
+
+
+@require_auth
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show or set the transcription model (mirrors the /settings menu)."""
+
+    message = update.effective_message
+    user = update.effective_user
+    if message is None or user is None:
+        return
+
+    services = get_services(context)
+    options = services.transcriber.available_models()
+    user_settings = services.db.get_settings(user.id)
+
+    if not context.args:
+        await message.reply_text(
+            f"Modello attuale: *{model_label(services.transcriber, user_settings.model)}*\n\n"
+            "Per cambiarlo: `/model <valore>`\n\n"
+            "Valori disponibili:\n" + _format_options(options),
+            parse_mode="Markdown",
+        )
+        return
+
+    value = context.args[0]
+    if not any(option.value == value for option in options):
+        await message.reply_text(
+            f"Modello non valido: `{value}`\n\n"
+            "Valori disponibili:\n" + _format_options(options),
+            parse_mode="Markdown",
+        )
+        return
+
+    services.db.update_setting(user.id, "model", value)
+    await message.reply_text(
+        f"Modello impostato su *{model_label(services.transcriber, value)}*.",
+        parse_mode="Markdown",
+    )
+
+
+@require_auth
+async def language_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Show or set the transcription language (mirrors the /settings menu)."""
+
+    message = update.effective_message
+    user = update.effective_user
+    if message is None or user is None:
+        return
+
+    services = get_services(context)
+    options = services.transcriber.available_languages()
+    user_settings = services.db.get_settings(user.id)
+
+    if not context.args:
+        await message.reply_text(
+            f"Lingua attuale: *{language_label(services.transcriber, user_settings.language)}*\n\n"
+            "Per cambiarla: `/language <codice>`\n\n"
+            "Codici disponibili:\n" + _format_options(options),
+            parse_mode="Markdown",
+        )
+        return
+
+    value = context.args[0]
+    if not any(option.value == value for option in options):
+        await message.reply_text(
+            f"Lingua non valida: `{value}`\n\n"
+            "Codici disponibili:\n" + _format_options(options),
+            parse_mode="Markdown",
+        )
+        return
+
+    services.db.update_setting(user.id, "language", value)
+    await message.reply_text(
+        f"Lingua impostata su *{language_label(services.transcriber, value)}*.",
+        parse_mode="Markdown",
+    )
+
+
+_STREAMING_ON = {"on", "si", "sì", "true", "1"}
+_STREAMING_OFF = {"off", "no", "false", "0"}
+
+
+@require_auth
+async def streaming_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Toggle or set live streaming (mirrors the /settings menu)."""
+
+    message = update.effective_message
+    user = update.effective_user
+    if message is None or user is None:
+        return
+
+    services = get_services(context)
+    user_settings = services.db.get_settings(user.id)
+
+    if not context.args:
+        new_value = not user_settings.streaming
+    else:
+        arg = context.args[0].lower()
+        if arg in _STREAMING_ON:
+            new_value = True
+        elif arg in _STREAMING_OFF:
+            new_value = False
+        else:
+            await message.reply_text(
+                "Uso: `/streaming` per invertire, oppure "
+                "`/streaming on` / `/streaming off`.",
+                parse_mode="Markdown",
+            )
+            return
+
+    services.db.update_setting(user.id, "streaming", new_value)
+    state = "attivo" if new_value else "disattivo"
+    await message.reply_text(f"Streaming {state}.")
 
 
 # -- admin commands -------------------------------------------------------
@@ -237,6 +358,12 @@ async def _decide_via_command(
 
 
 # -- helpers --------------------------------------------------------------
+
+
+def _format_options(options: list[ModelOption] | list[LanguageOption]) -> str:
+    """Render an option list, one per line, as "`value` – label"."""
+
+    return "\n".join(f"`{option.value}` – {option.label}" for option in options)
 
 
 async def _notify_admins_new_request(
