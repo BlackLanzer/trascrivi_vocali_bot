@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     default_language: str = "it"
     default_streaming: bool = False
 
+    # Per-minute rate used only for the admin /debug cost estimate. The Deepgram
+    # API does not return a price, so this is a configurable estimate.
+    deepgram_price_per_minute: float = 0.0043
+
 
 @lru_cache
 def get_settings() -> Settings:

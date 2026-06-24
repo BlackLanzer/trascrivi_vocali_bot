@@ -73,7 +73,22 @@ class DeepgramTranscriber(Transcriber):
             if alternatives:
                 transcript = alternatives[0].transcript or ""
                 confidence = alternatives[0].confidence
-        return TranscriptResult(text=transcript.strip(), confidence=confidence)
+
+        # Metadata carries the billed audio duration (seconds) and the request
+        # id; both may be absent, so guard like the transcript extraction above.
+        duration: float | None = None
+        request_id: str | None = None
+        metadata = getattr(response, "metadata", None)
+        if metadata is not None:
+            duration = getattr(metadata, "duration", None)
+            request_id = getattr(metadata, "request_id", None)
+
+        return TranscriptResult(
+            text=transcript.strip(),
+            confidence=confidence,
+            duration=duration,
+            request_id=request_id,
+        )
 
     # -- streaming --------------------------------------------------------
 

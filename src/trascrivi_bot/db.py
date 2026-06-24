@@ -70,6 +70,18 @@ class Database:
                 );
                 """
             )
+
+            # Lightweight migration: older databases predate the ``debug``
+            # column. Add it if missing so existing deployments keep working.
+            columns = {
+                row["name"]
+                for row in self._conn.execute("PRAGMA table_info(settings)")
+            }
+            if "debug" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE settings ADD COLUMN debug INTEGER NOT NULL DEFAULT 0"
+                )
+
             self._conn.commit()
 
     # -- access control ---------------------------------------------------
@@ -148,8 +160,9 @@ class Database:
             if row is None:
                 self._conn.execute(
                     """
-                    INSERT INTO settings (user_id, provider, model, language, streaming)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO settings
+                        (user_id, provider, model, language, streaming, debug)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
@@ -157,6 +170,7 @@ class Database:
                         self._default_model,
                         self._default_language,
                         int(self._default_streaming),
+                        0,
                     ),
                 )
                 self._conn.commit()
@@ -172,13 +186,15 @@ class Database:
         ``provider`` (validated to avoid SQL injection via column name).
         """
 
-        if key not in {"model", "language", "streaming", "provider"}:
+        if key not in {"model", "language", "streaming", "provider", "debug"}:
             raise ValueError(f"Unknown setting: {key!r}")
 
         # Ensure a row exists before updating.
         self.get_settings(user_id)
 
-        stored: str | int = int(value) if key == "streaming" else str(value)
+        stored: str | int = (
+            int(value) if key in {"streaming", "debug"} else str(value)
+        )
         with self._lock:
             self._conn.execute(
                 f"UPDATE settings SET {key} = ? WHERE user_id = ?",  # noqa: S608 - key is whitelisted
@@ -210,4 +226,5 @@ def _row_to_settings(row: sqlite3.Row) -> UserSettings:
         model=row["model"],
         language=row["language"],
         streaming=bool(row["streaming"]),
+        debug=bool(row["debug"]),
     )

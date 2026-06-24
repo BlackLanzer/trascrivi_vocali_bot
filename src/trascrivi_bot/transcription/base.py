@@ -26,6 +26,8 @@ class TranscriptResult:
 
     text: str
     confidence: float | None = None
+    duration: float | None = None
+    request_id: str | None = None
 
 
 @dataclass(slots=True)

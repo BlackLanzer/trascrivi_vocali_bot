@@ -36,3 +36,4 @@ class UserSettings:
     model: str
     language: str
     streaming: bool
+    debug: bool

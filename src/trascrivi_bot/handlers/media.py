@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import suppress
+from datetime import timedelta
 
 from telegram import Message, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..keyboards import stop_streaming_keyboard
-from ..security import require_auth
+from ..security import is_admin, require_auth
 from ..services import get_services
 from ..transcription.base import Transcriber, TranscriptionConfig
 
@@ -91,6 +93,11 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     # 3) Transcribe (streaming when enabled and supported, else pre-recorded).
+    # Deepgram metadata is only available on the pre-recorded path; default to
+    # None so the debug report can fall back to the Telegram media duration.
+    audio_duration: float | None = None
+    request_id: str | None = None
+    started = time.monotonic()
     try:
         if use_streaming:
             stop_event = asyncio.Event()
@@ -113,10 +120,13 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else:
             result = await transcriber.transcribe_file(audio_bytes, config, mimetype)
             final_text = result.text
+            audio_duration = result.duration
+            request_id = result.request_id
     except Exception:  # noqa: BLE001 - never let a transcription error crash the bot
         logger.exception("Transcription failed")
         await _finish_with_error(placeholder)
         return
+    elapsed = time.monotonic() - started
 
     final_text = final_text.strip() or _EMPTY_TEXT
 
@@ -125,6 +135,33 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     with suppress(TelegramError):
         await placeholder.edit_text(_DONE_TEXT)
     await _send_transcript(message, final_text)
+
+    # 5) Admin debug report: an ESTIMATED request cost, sent only to admins who
+    #    enabled debug mode via /debug.
+    if user_settings.debug and is_admin(context, user.id):
+        # Prefer Deepgram's reported duration (pre-recorded); otherwise fall
+        # back to the Telegram media duration, which is always present.
+        tg_duration = media.duration
+        fallback = (
+            tg_duration.total_seconds()
+            if isinstance(tg_duration, timedelta)
+            else float(tg_duration)
+        )
+        duration = audio_duration if audio_duration is not None else fallback
+        rate = services.settings.deepgram_price_per_minute
+        cost = (duration / 60.0) * rate
+        lines = [
+            "🔧 Debug",
+            f"Modello: {user_settings.model} | Lingua: {user_settings.language}",
+            f"Modalità: {'streaming' if use_streaming else 'pre-registrato'}",
+            f"Durata audio: {duration:.0f}s",
+            f"Elaborazione: {elapsed:.1f}s",
+            f"Costo stimato: ${cost:.4f} (tariffa ${rate:.4f}/min)",
+        ]
+        if request_id is not None:
+            lines.append(f"request_id: {request_id}")
+        with suppress(TelegramError):
+            await message.reply_text("\n".join(lines))
 
 
 async def _run_streaming(

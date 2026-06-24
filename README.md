@@ -59,6 +59,7 @@ Then edit `.env` and set at least `TELEGRAM_BOT_TOKEN` and `DEEPGRAM_API_KEY`.
 | `DEFAULT_MODEL` | `nova-3` | Default model for new users. |
 | `DEFAULT_LANGUAGE` | `it` | Default language for new users. |
 | `DEFAULT_STREAMING` | `false` | Default streaming setting for new users. |
+| `DEEPGRAM_PRICE_PER_MINUTE` | `0.0043` | Per-minute rate used only for the admin `/debug` cost estimate (the API does not return a price). |
 
 Set up the admins file:
 
@@ -123,6 +124,7 @@ PYTHONPATH=src python -m trascrivi_bot.main
 | `/deny <id>` | admins | Deny a user. |
 | `/users` | admins | List approved users. |
 | `/revoke <id>` | admins | Revoke a user's access. |
+| `/debug` | admins | Toggle a per-transcription estimated-cost report. |
 
 ## Project structure
 

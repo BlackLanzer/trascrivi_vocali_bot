@@ -93,6 +93,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/deny <id> – rifiuta un utente",
             "/users – elenco utenti approvati",
             "/revoke <id> – revoca l'accesso a un utente",
+            "/debug – attiva/disattiva il report di costo stimato",
         ]
     await message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -292,6 +293,29 @@ async def deny_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @require_admin
 async def revoke_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _decide_via_command(update, context, AccessStatus.DENIED, revoke=True)
+
+
+@require_admin
+async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle the admin's debug mode (per-transcription cost estimate report)."""
+
+    message = update.effective_message
+    user = update.effective_user
+    if message is None or user is None:
+        return
+
+    services = get_services(context)
+    current = services.db.get_settings(user.id).debug
+    new_state = not current
+    services.db.update_setting(user.id, "debug", new_state)
+
+    if new_state:
+        await message.reply_text(
+            "🔧 Modalità debug attivata. Dopo ogni trascrizione riceverai "
+            "un report con il costo stimato della richiesta."
+        )
+    else:
+        await message.reply_text("🔧 Modalità debug disattivata.")
 
 
 @require_admin

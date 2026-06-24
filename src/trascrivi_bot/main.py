@@ -42,6 +42,7 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("deny", "Rifiuta un utente: /deny <id>"),
     BotCommand("users", "Elenco utenti approvati"),
     BotCommand("revoke", "Revoca l'accesso: /revoke <id>"),
+    BotCommand("debug", "Attiva/disattiva il report di costo stimato"),
 ]
 
 
@@ -108,6 +109,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("deny", commands.deny_command))
     application.add_handler(CommandHandler("users", commands.users_command))
     application.add_handler(CommandHandler("revoke", commands.revoke_command))
+    application.add_handler(CommandHandler("debug", commands.debug_command))
 
     # Inline-keyboard callbacks.
     application.add_handler(
