@@ -15,6 +15,7 @@ from ..keyboards import (
     language_keyboard,
     main_settings_keyboard,
     model_keyboard,
+    summary_model_keyboard,
 )
 from ..handlers.media import ACTIVE_STREAMS_KEY
 from ..models import AccessStatus
@@ -22,6 +23,9 @@ from ..security import is_admin, is_authorized
 from ..services import get_services
 
 logger = logging.getLogger(__name__)
+
+# Telegram's per-message character limit.
+_MAX_MESSAGE_LENGTH = 4096
 
 
 async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -63,8 +67,16 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
+    if data == "menu:summodel" and services.summarizer is not None:
+        user_settings = db.get_settings(user.id)
+        await query.edit_message_text(
+            "Scegli il modello per il riassunto:",
+            reply_markup=summary_model_keyboard(user_settings, services.summarizer),
+        )
+        return
+
     if data == "menu:main":
-        await _show_main_menu(query, db, transcriber, user.id)
+        await _show_main_menu(query, services, user.id)
         return
 
     # data is "set:<field>:<value>"
@@ -77,7 +89,9 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             db.update_setting(user.id, "language", value)
         elif field == "stream":
             db.update_setting(user.id, "streaming", value == "1")
-        await _show_main_menu(query, db, transcriber, user.id)
+        elif field == "summodel":
+            db.update_setting(user.id, "summary_model", value)
+        await _show_main_menu(query, services, user.id)
 
 
 async def access_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -157,12 +171,68 @@ async def stop_streaming_callback(
     await query.answer("Interrompo…")
 
 
-async def _show_main_menu(query, db, transcriber, user_id: int) -> None:  # type: ignore[no-untyped-def]
+async def summarize_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Summarize a cached transcript on demand (``sum:<transcript_id>``)."""
+
+    query = update.callback_query
+    user = update.effective_user
+    if query is None or user is None or query.data is None:
+        return
+    await query.answer()
+
+    message = query.message
+    if not isinstance(message, Message) or not is_authorized(context, user.id):
+        return
+
+    services = get_services(context)
+    summarizer = services.summarizer
+    if summarizer is None:
+        with suppress(TelegramError):
+            await message.reply_text("Riassunto non disponibile.")
+        return
+
+    try:
+        transcript_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return
+
+    cached = services.db.get_transcript(transcript_id)
+    if cached is None:
+        with suppress(TelegramError):
+            await message.reply_text(
+                "Trascrizione non più disponibile per il riassunto."
+            )
+        return
+
+    placeholder = await message.reply_text("📝 Riassumo…", disable_notification=True)
+    summary_model = services.db.get_settings(user.id).summary_model
+    try:
+        summary = await summarizer.summarize(
+            cached.text, summary_model, cached.language
+        )
+    except Exception:  # noqa: BLE001 - never let a summary error crash the bot
+        logger.exception("Summarization failed")
+        with suppress(TelegramError):
+            await placeholder.edit_text(
+                "⚠️ Errore durante il riassunto. Riprova."
+            )
+        return
+
+    summary = summary.strip() or "(riassunto vuoto)"
+    with suppress(TelegramError):
+        await placeholder.edit_text(f"📝 Riassunto:\n\n{summary}"[:_MAX_MESSAGE_LENGTH])
+
+
+async def _show_main_menu(query, services, user_id: int) -> None:  # type: ignore[no-untyped-def]
     """Refresh the message to show the top-level settings menu."""
 
-    user_settings = db.get_settings(user_id)
+    user_settings = services.db.get_settings(user_id)
     with suppress(TelegramError):
         await query.edit_message_text(
             "Impostazioni di trascrizione:",
-            reply_markup=main_settings_keyboard(user_settings, transcriber),
+            reply_markup=main_settings_keyboard(
+                user_settings, services.transcriber, services.summarizer
+            ),
         )

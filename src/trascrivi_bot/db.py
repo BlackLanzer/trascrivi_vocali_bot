@@ -33,6 +33,7 @@ class Database:
         default_model: str,
         default_language: str,
         default_streaming: bool,
+        default_summary_model: str,
     ) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
@@ -43,6 +44,7 @@ class Database:
         self._default_model = default_model
         self._default_language = default_language
         self._default_streaming = default_streaming
+        self._default_summary_model = default_summary_model
 
         self._init_schema()
 
@@ -93,6 +95,17 @@ class Database:
             if "debug" not in columns:
                 self._conn.execute(
                     "ALTER TABLE settings ADD COLUMN debug INTEGER NOT NULL DEFAULT 0"
+                )
+            if "summary_model" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE settings ADD COLUMN summary_model TEXT NOT NULL "
+                    "DEFAULT ''"
+                )
+                # Backfill existing rows with the configured default (the empty
+                # literal above is only to satisfy NOT NULL on existing rows).
+                self._conn.execute(
+                    "UPDATE settings SET summary_model = ? WHERE summary_model = ''",
+                    (self._default_summary_model,),
                 )
 
             self._conn.commit()
@@ -267,8 +280,9 @@ class Database:
                 self._conn.execute(
                     """
                     INSERT INTO settings
-                        (user_id, provider, model, language, streaming, debug)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (user_id, provider, model, language, streaming, debug,
+                         summary_model)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
@@ -277,6 +291,7 @@ class Database:
                         self._default_language,
                         int(self._default_streaming),
                         0,
+                        self._default_summary_model,
                     ),
                 )
                 self._conn.commit()
@@ -292,7 +307,14 @@ class Database:
         ``provider`` (validated to avoid SQL injection via column name).
         """
 
-        if key not in {"model", "language", "streaming", "provider", "debug"}:
+        if key not in {
+            "model",
+            "language",
+            "streaming",
+            "provider",
+            "debug",
+            "summary_model",
+        }:
             raise ValueError(f"Unknown setting: {key!r}")
 
         # Ensure a row exists before updating.
@@ -347,4 +369,5 @@ def _row_to_settings(row: sqlite3.Row) -> UserSettings:
         language=row["language"],
         streaming=bool(row["streaming"]),
         debug=bool(row["debug"]),
+        summary_model=row["summary_model"],
     )

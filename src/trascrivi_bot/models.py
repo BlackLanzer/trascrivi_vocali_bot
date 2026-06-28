@@ -37,6 +37,7 @@ class UserSettings:
     language: str
     streaming: bool
     debug: bool
+    summary_model: str
 
 
 @dataclass(slots=True)

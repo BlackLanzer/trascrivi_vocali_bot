@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     default_language: str = "it"
     default_streaming: bool = False
 
+    # Summarization via OpenRouter (optional). When OPENROUTER_API_KEY is unset
+    # the summarize button is hidden. The model is per-user selectable; this is
+    # the default applied on first access.
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    default_summary_model: str = "deepseek/deepseek-chat"
+
     # Per-minute rate used only for the admin /debug cost estimate. The Deepgram
     # API does not return a price, so this is a configurable estimate. Acts as a
     # fallback when the selected model has no per-model price.

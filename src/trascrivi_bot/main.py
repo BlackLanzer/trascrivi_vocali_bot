@@ -24,6 +24,7 @@ from .config import Settings, get_settings, load_admins
 from .db import Database
 from .handlers import callbacks, commands, media
 from .services import SERVICES_KEY, Services, get_services_from_bot_data
+from .summarization import get_summarizer
 from .transcription.factory import get_transcriber
 
 logger = logging.getLogger(__name__)
@@ -169,11 +170,17 @@ def build_application(settings: Settings) -> Application:
         default_model=settings.default_model,
         default_language=settings.default_language,
         default_streaming=settings.default_streaming,
+        default_summary_model=settings.default_summary_model,
     )
     admins = load_admins(settings.admins_file)
     transcriber = get_transcriber(settings)
+    summarizer = get_summarizer(settings)
     services = Services(
-        settings=settings, db=db, admins=admins, transcriber=transcriber
+        settings=settings,
+        db=db,
+        admins=admins,
+        transcriber=transcriber,
+        summarizer=summarizer,
     )
 
     if not admins:
@@ -216,6 +223,9 @@ def build_application(settings: Settings) -> Application:
     )
     application.add_handler(
         CallbackQueryHandler(callbacks.stop_streaming_callback, pattern=r"^stream:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(callbacks.summarize_callback, pattern=r"^sum:")
     )
 
     # The core flow: voice notes and audio files.

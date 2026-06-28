@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import Settings
 from .db import Database
+from .summarization import Summarizer
 from .transcription.base import Transcriber
 
 if TYPE_CHECKING:
@@ -29,6 +30,7 @@ class Services:
     db: Database
     admins: set[int]
     transcriber: Transcriber
+    summarizer: Summarizer | None = None
 
 
 def get_services_from_bot_data(bot_data: dict[str, Any]) -> Services:

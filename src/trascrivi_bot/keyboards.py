@@ -5,6 +5,7 @@ from __future__ import annotations
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .models import AccessRecord, UserSettings
+from .summarization import Summarizer
 from .transcription.base import Transcriber
 
 
@@ -27,9 +28,14 @@ def model_label(transcriber: Transcriber, value: str) -> str:
 
 
 def main_settings_keyboard(
-    settings: UserSettings, transcriber: Transcriber
+    settings: UserSettings,
+    transcriber: Transcriber,
+    summarizer: Summarizer | None = None,
 ) -> InlineKeyboardMarkup:
-    """Top-level settings menu showing the current values."""
+    """Top-level settings menu showing the current values.
+
+    The summary-model row appears only when a summarizer is configured.
+    """
 
     streaming_label = "🟢 Attivo" if settings.streaming else "⚪️ Disattivo"
     toggle_target = 0 if settings.streaming else 1
@@ -52,9 +58,44 @@ def main_settings_keyboard(
                 callback_data=f"set:stream:{toggle_target}",
             )
         ],
-        [InlineKeyboardButton("✅ Chiudi", callback_data="menu:close")],
     ]
+    if summarizer is not None:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"📝 Riassunto: {summarizer.label_for(settings.summary_model)}",
+                    callback_data="menu:summodel",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton("✅ Chiudi", callback_data="menu:close")])
     return InlineKeyboardMarkup(rows)
+
+
+def summary_model_keyboard(
+    settings: UserSettings, summarizer: Summarizer
+) -> InlineKeyboardMarkup:
+    """Submenu to pick the summarization model."""
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"{'• ' if option.value == settings.summary_model else ''}{option.label}",
+                callback_data=f"set:summodel:{option.value}",
+            )
+        ]
+        for option in summarizer.available_models()
+    ]
+    rows.append([InlineKeyboardButton("⬅️ Indietro", callback_data="menu:main")])
+    return InlineKeyboardMarkup(rows)
+
+
+def summarize_keyboard(transcript_id: int) -> InlineKeyboardMarkup:
+    """Single "summarize" button attached under a transcript."""
+
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("📝 Riassumi", callback_data=f"sum:{transcript_id}")]]
+    )
 
 
 def model_keyboard(settings: UserSettings, transcriber: Transcriber) -> InlineKeyboardMarkup:

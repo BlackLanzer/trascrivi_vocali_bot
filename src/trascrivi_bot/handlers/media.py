@@ -9,11 +9,11 @@ from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 
-from telegram import Message, Update
+from telegram import InlineKeyboardMarkup, Message, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from ..keyboards import stop_streaming_keyboard
+from ..keyboards import stop_streaming_keyboard, summarize_keyboard
 from ..security import is_admin, require_auth
 from ..services import get_services
 from ..transcription.base import Transcriber, TranscriptionConfig
@@ -125,6 +125,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         final_text = cached.text
         audio_duration = cached.duration
         request_id = cached.request_id
+        transcript_id = cached.id
     else:
         # 2) Download the audio bytes and cache them on disk.
         try:
@@ -172,7 +173,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
         # Cache the result for future identical requests.
-        db.store_transcript(
+        transcript_id = db.store_transcript(
             file_unique_id=media.file_unique_id,
             model=user_settings.model,
             language=user_settings.language,
@@ -187,10 +188,16 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     final_text = final_text.strip() or _EMPTY_TEXT
 
     # 4) Mark the placeholder done (silent edit) and send the transcript as a
-    #    new message *with* a notification so the user gets pinged.
+    #    new message *with* a notification so the user gets pinged. When a
+    #    summarizer is configured, attach a "summarize" button to the last chunk.
     with suppress(TelegramError):
         await placeholder.edit_text(_DONE_TEXT)
-    await _send_transcript(message, final_text)
+    summarize_markup = (
+        summarize_keyboard(transcript_id)
+        if services.summarizer is not None
+        else None
+    )
+    await _send_transcript(message, final_text, summarize_markup)
 
     # 5) Estimate cost (used for both the structured server log and the admin
     #    debug report). Prefer Deepgram's reported duration (pre-recorded);
@@ -305,14 +312,21 @@ async def _run_streaming(
     return " ".join(final_parts).strip()
 
 
-async def _send_transcript(message: Message, text: str) -> None:
+async def _send_transcript(
+    message: Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
     """Send the transcript as new message(s) with a notification.
 
-    Splits into <=4096-char chunks (Telegram's limit) when necessary.
+    Splits into <=4096-char chunks (Telegram's limit) when necessary. The
+    optional ``reply_markup`` (the summarize button) goes on the last chunk only.
     """
 
-    for chunk in _split_text(text, MAX_MESSAGE_LENGTH):
-        await message.reply_text(chunk)
+    chunks = _split_text(text, MAX_MESSAGE_LENGTH)
+    for index, chunk in enumerate(chunks):
+        markup = reply_markup if index == len(chunks) - 1 else None
+        await message.reply_text(chunk, reply_markup=markup)
 
 
 def _save_audio(

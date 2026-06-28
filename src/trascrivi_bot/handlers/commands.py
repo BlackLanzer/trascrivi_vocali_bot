@@ -112,7 +112,9 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user_settings = services.db.get_settings(user.id)
     await message.reply_text(
         "Impostazioni di trascrizione:",
-        reply_markup=main_settings_keyboard(user_settings, services.transcriber),
+        reply_markup=main_settings_keyboard(
+            user_settings, services.transcriber, services.summarizer
+        ),
     )
 
 
