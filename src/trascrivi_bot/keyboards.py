@@ -58,17 +58,24 @@ def main_settings_keyboard(
 
 
 def model_keyboard(settings: UserSettings, transcriber: Transcriber) -> InlineKeyboardMarkup:
-    """Submenu to pick a model."""
+    """Submenu to pick a model, showing each model's per-minute price."""
 
-    rows = [
-        [
-            InlineKeyboardButton(
-                f"{'• ' if option.value == settings.model else ''}{option.label}",
-                callback_data=f"set:model:{option.value}",
-            )
-        ]
-        for option in transcriber.available_models()
-    ]
+    rows = []
+    for option in transcriber.available_models():
+        marker = "• " if option.value == settings.model else ""
+        price = (
+            f" · ${option.price_per_minute:.4f}/min"
+            if option.price_per_minute is not None
+            else ""
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{marker}{option.label}{price}",
+                    callback_data=f"set:model:{option.value}",
+                )
+            ]
+        )
     rows.append([InlineKeyboardButton("⬅️ Indietro", callback_data="menu:main")])
     return InlineKeyboardMarkup(rows)
 

@@ -146,7 +146,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else float(tg_duration)
     )
     duration = audio_duration if audio_duration is not None else fallback
-    rate = services.settings.deepgram_price_per_minute
+    model_rate = transcriber.price_for(user_settings.model)
+    rate = (
+        model_rate
+        if model_rate is not None
+        else services.settings.deepgram_price_per_minute
+    )
     cost = (duration / 60.0) * rate
 
     # Structured per-request log line for server-side observability.

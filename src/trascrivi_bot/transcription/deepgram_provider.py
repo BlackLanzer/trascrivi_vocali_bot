@@ -139,10 +139,12 @@ class DeepgramTranscriber(Transcriber):
     # -- settings menu options -------------------------------------------
 
     def available_models(self) -> list[ModelOption]:
+        # Prices are Deepgram's published pay-as-you-go per-minute rates (USD);
+        # verify against deepgram.com/pricing as they may change.
         return [
-            ModelOption("nova-3", "Nova 3 (consigliato)"),
-            ModelOption("nova-2", "Nova 2"),
-            ModelOption("enhanced", "Enhanced"),
+            ModelOption("nova-3", "Nova 3 (consigliato)", price_per_minute=0.0043),
+            ModelOption("nova-2", "Nova 2", price_per_minute=0.0043),
+            ModelOption("enhanced", "Enhanced", price_per_minute=0.0145),
         ]
 
     def available_languages(self) -> list[LanguageOption]:

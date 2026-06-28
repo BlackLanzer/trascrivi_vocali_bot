@@ -44,10 +44,15 @@ class StreamEvent:
 
 @dataclass(slots=True)
 class ModelOption:
-    """A selectable model, with a human-friendly label for the settings menu."""
+    """A selectable model, with a human-friendly label for the settings menu.
+
+    ``price_per_minute`` is the provider's published per-minute rate (USD), shown
+    in the menu and used for the admin cost estimate; ``None`` when unknown.
+    """
 
     value: str
     label: str
+    price_per_minute: float | None = None
 
 
 @dataclass(slots=True)
@@ -88,6 +93,14 @@ class Transcriber(ABC):
     @abstractmethod
     def available_models(self) -> list[ModelOption]:
         """Models offered in the settings menu (provider-specific)."""
+
+    def price_for(self, model: str) -> float | None:
+        """Per-minute price (USD) of ``model``, or ``None`` if unknown."""
+
+        for option in self.available_models():
+            if option.value == model:
+                return option.price_per_minute
+        return None
 
     @abstractmethod
     def available_languages(self) -> list[LanguageOption]:
