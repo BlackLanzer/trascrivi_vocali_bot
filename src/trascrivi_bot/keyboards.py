@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .models import AccessRecord, UserSettings
+from .models import AccessRecord, GroupRecord, UserSettings
 from .summarization import Summarizer
 from .transcription.base import Transcriber
 
@@ -163,3 +163,27 @@ def describe_user(record: AccessRecord) -> str:
 
     handle = f"@{record.username}" if record.username else (record.first_name or "—")
     return f"{handle} (id {record.user_id})"
+
+
+def group_request_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Approve/deny buttons attached to an admin's view of a group request."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Abilita", callback_data=f"grp:approve:{chat_id}"
+                ),
+                InlineKeyboardButton(
+                    "❌ Rifiuta", callback_data=f"grp:deny:{chat_id}"
+                ),
+            ]
+        ]
+    )
+
+
+def describe_group(record: GroupRecord) -> str:
+    """Short label for a group in admin listings."""
+
+    title = record.title or "—"
+    return f"{title} (id {record.chat_id})"

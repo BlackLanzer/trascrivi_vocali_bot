@@ -13,7 +13,13 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import AccessRecord, AccessStatus, CachedTranscript, UserSettings
+from .models import (
+    AccessRecord,
+    AccessStatus,
+    CachedTranscript,
+    GroupRecord,
+    UserSettings,
+)
 
 
 def _utcnow() -> str:
@@ -69,6 +75,16 @@ class Database:
                     model     TEXT NOT NULL,
                     language  TEXT NOT NULL,
                     streaming INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS groups (
+                    chat_id      INTEGER PRIMARY KEY,
+                    title        TEXT,
+                    status       TEXT NOT NULL
+                                 CHECK (status IN ('pending', 'approved', 'denied')),
+                    requested_at TEXT,
+                    decided_at   TEXT,
+                    decided_by   INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS transcripts (
@@ -173,6 +189,61 @@ class Database:
                 (status.value,),
             ).fetchall()
         return [_row_to_access(row) for row in rows]
+
+    # -- group access -----------------------------------------------------
+
+    def get_group(self, chat_id: int) -> GroupRecord | None:
+        """Return the access record for a group, or ``None`` if unknown."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM groups WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+        return _row_to_group(row) if row is not None else None
+
+    def add_pending_group(self, chat_id: int, title: str | None) -> bool:
+        """Record a pending group request. Returns True if newly created.
+
+        Idempotent: an existing group (any status) is left untouched, so admins
+        are not re-notified about a group they already decided on.
+        """
+
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                INSERT INTO groups (chat_id, title, status, requested_at)
+                VALUES (?, ?, 'pending', ?)
+                ON CONFLICT(chat_id) DO NOTHING
+                """,
+                (chat_id, title, _utcnow()),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def set_group_status(
+        self, chat_id: int, status: AccessStatus, decided_by: int
+    ) -> None:
+        """Update a group's access status (approve / deny)."""
+
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE groups
+                   SET status = ?, decided_at = ?, decided_by = ?
+                 WHERE chat_id = ?
+                """,
+                (status.value, _utcnow(), decided_by, chat_id),
+            )
+            self._conn.commit()
+
+    def list_groups(self) -> list[GroupRecord]:
+        """Return all known groups, oldest request first."""
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM groups ORDER BY requested_at"
+            ).fetchall()
+        return [_row_to_group(row) for row in rows]
 
     # -- transcript cache -------------------------------------------------
 
@@ -340,6 +411,17 @@ def _row_to_access(row: sqlite3.Row) -> AccessRecord:
         user_id=row["user_id"],
         username=row["username"],
         first_name=row["first_name"],
+        status=AccessStatus(row["status"]),
+        requested_at=row["requested_at"],
+        decided_at=row["decided_at"],
+        decided_by=row["decided_by"],
+    )
+
+
+def _row_to_group(row: sqlite3.Row) -> GroupRecord:
+    return GroupRecord(
+        chat_id=row["chat_id"],
+        title=row["title"],
         status=AccessStatus(row["status"]),
         requested_at=row["requested_at"],
         decided_at=row["decided_at"],

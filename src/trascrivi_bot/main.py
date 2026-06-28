@@ -15,6 +15,7 @@ from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -50,6 +51,7 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("deny", "Rifiuta un utente: /deny <id>"),
     BotCommand("users", "Elenco utenti approvati"),
     BotCommand("revoke", "Revoca l'accesso: /revoke <id>"),
+    BotCommand("groups", "Gruppi e abilitazione"),
     BotCommand("debug", "Attiva/disattiva il report di costo stimato"),
 ]
 
@@ -212,6 +214,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("deny", commands.deny_command))
     application.add_handler(CommandHandler("users", commands.users_command))
     application.add_handler(CommandHandler("revoke", commands.revoke_command))
+    application.add_handler(CommandHandler("groups", commands.groups_command))
     application.add_handler(CommandHandler("debug", commands.debug_command))
 
     # Inline-keyboard callbacks.
@@ -222,10 +225,18 @@ def build_application(settings: Settings) -> Application:
         CallbackQueryHandler(callbacks.access_callback, pattern=r"^req:")
     )
     application.add_handler(
+        CallbackQueryHandler(callbacks.group_callback, pattern=r"^grp:")
+    )
+    application.add_handler(
         CallbackQueryHandler(callbacks.stop_streaming_callback, pattern=r"^stream:")
     )
     application.add_handler(
         CallbackQueryHandler(callbacks.summarize_callback, pattern=r"^sum:")
+    )
+
+    # Detect being added to / removed from groups.
+    application.add_handler(
+        ChatMemberHandler(commands.on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
     )
 
     # The core flow: voice notes and audio files.

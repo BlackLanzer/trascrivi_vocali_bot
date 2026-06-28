@@ -41,6 +41,22 @@ class UserSettings:
 
 
 @dataclass(slots=True)
+class GroupRecord:
+    """A row of the ``groups`` table: a group the bot was added to and its status.
+
+    Once a group is ``approved`` by an admin, voice notes from any member are
+    transcribed. The chat id is negative for Telegram groups/supergroups.
+    """
+
+    chat_id: int
+    title: str | None
+    status: AccessStatus
+    requested_at: str | None = None
+    decided_at: str | None = None
+    decided_by: int | None = None
+
+
+@dataclass(slots=True)
 class CachedTranscript:
     """A cached transcription (a row of the ``transcripts`` table).
 

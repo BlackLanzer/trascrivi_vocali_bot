@@ -6,20 +6,39 @@ import logging
 from contextlib import suppress
 
 from telegram import Update, User
+from telegram.constants import ChatMemberStatus
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..keyboards import (
     access_request_keyboard,
+    describe_group,
     describe_user,
+    group_request_keyboard,
     language_label,
     main_settings_keyboard,
     model_label,
 )
 from ..models import AccessStatus
-from ..security import is_admin, is_authorized, require_admin, require_auth
+from ..security import (
+    is_admin,
+    is_authorized,
+    is_group_chat,
+    register_group_request,
+    require_admin,
+    require_auth,
+    settings_key,
+)
 from ..services import Services, get_services
 from ..transcription.base import LanguageOption, ModelOption
+
+# Chat-member statuses that mean the bot is present in a chat.
+_PRESENT_STATUSES = {
+    ChatMemberStatus.MEMBER,
+    ChatMemberStatus.ADMINISTRATOR,
+    ChatMemberStatus.OWNER,
+    ChatMemberStatus.RESTRICTED,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +113,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/deny <id> – rifiuta un utente",
             "/users – elenco utenti approvati",
             "/revoke <id> – revoca l'accesso a un utente",
+            "/groups – gruppi e abilitazione",
             "/debug – attiva/disattiva il report di costo stimato",
         ]
     await message.reply_text("\n".join(lines), parse_mode="Markdown")
@@ -109,7 +129,8 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     services = get_services(context)
-    user_settings = services.db.get_settings(user.id)
+    key = settings_key(update) or user.id
+    user_settings = services.db.get_settings(key)
     await message.reply_text(
         "Impostazioni di trascrizione:",
         reply_markup=main_settings_keyboard(
@@ -129,11 +150,16 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     services = get_services(context)
     transcriber = services.transcriber
-    user_settings = services.db.get_settings(user.id)
+    key = settings_key(update) or user.id
+    user_settings = services.db.get_settings(key)
     role = "amministratore" if is_admin(context, user.id) else "utente autorizzato"
+    context_label = (
+        "gruppo" if is_group_chat(update.effective_chat) else "chat privata"
+    )
     streaming = "attivo" if user_settings.streaming else "disattivo"
     await message.reply_text(
         f"Stato: {role}\n"
+        f"Contesto: {context_label}\n"
         f"Provider: {user_settings.provider}\n"
         f"Modello: {model_label(transcriber, user_settings.model)}\n"
         f"Lingua: {language_label(transcriber, user_settings.language)}\n"
@@ -151,8 +177,9 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     services = get_services(context)
+    key = settings_key(update) or user.id
     options = services.transcriber.available_models()
-    user_settings = services.db.get_settings(user.id)
+    user_settings = services.db.get_settings(key)
 
     if not context.args:
         await message.reply_text(
@@ -172,7 +199,7 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    services.db.update_setting(user.id, "model", value)
+    services.db.update_setting(key, "model", value)
     await message.reply_text(
         f"Modello impostato su *{model_label(services.transcriber, value)}*.",
         parse_mode="Markdown",
@@ -191,8 +218,9 @@ async def language_command(
         return
 
     services = get_services(context)
+    key = settings_key(update) or user.id
     options = services.transcriber.available_languages()
-    user_settings = services.db.get_settings(user.id)
+    user_settings = services.db.get_settings(key)
 
     if not context.args:
         await message.reply_text(
@@ -212,7 +240,7 @@ async def language_command(
         )
         return
 
-    services.db.update_setting(user.id, "language", value)
+    services.db.update_setting(key, "language", value)
     await message.reply_text(
         f"Lingua impostata su *{language_label(services.transcriber, value)}*.",
         parse_mode="Markdown",
@@ -235,7 +263,8 @@ async def streaming_command(
         return
 
     services = get_services(context)
-    user_settings = services.db.get_settings(user.id)
+    key = settings_key(update) or user.id
+    user_settings = services.db.get_settings(key)
 
     if not context.args:
         new_value = not user_settings.streaming
@@ -253,7 +282,7 @@ async def streaming_command(
             )
             return
 
-    services.db.update_setting(user.id, "streaming", new_value)
+    services.db.update_setting(key, "streaming", new_value)
     state = "attivo" if new_value else "disattivo"
     await message.reply_text(f"Streaming {state}.")
 
@@ -337,6 +366,54 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     lines = ["*Utenti approvati*"]
     lines += [f"• {describe_user(record)}" for record in approved]
     await message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+@require_admin
+async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List known groups; pending ones get approve/deny buttons."""
+
+    message = update.effective_message
+    if message is None:
+        return
+
+    services = get_services(context)
+    groups = services.db.list_groups()
+    if not groups:
+        await message.reply_text("Nessun gruppo registrato.")
+        return
+
+    approved = [g for g in groups if g.status is AccessStatus.APPROVED]
+    pending = [g for g in groups if g.status is AccessStatus.PENDING]
+
+    if approved:
+        lines = ["*Gruppi abilitati*"]
+        lines += [f"• {describe_group(g)}" for g in approved]
+        await message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    if pending:
+        await message.reply_text(f"Gruppi in attesa: {len(pending)}")
+        for group in pending:
+            await message.reply_text(
+                f"👥 {describe_group(group)}",
+                reply_markup=group_request_keyboard(group.chat_id),
+            )
+    elif not approved:
+        await message.reply_text("Nessun gruppo in attesa. ✅")
+
+
+async def on_my_chat_member(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """When the bot is added to a group, file a pending request for it."""
+
+    member_update = update.my_chat_member
+    if member_update is None:
+        return
+    chat = member_update.chat
+    if not is_group_chat(chat):
+        return
+    if member_update.new_chat_member.status in _PRESENT_STATUSES:
+        await register_group_request(context, chat)
 
 
 async def _decide_via_command(

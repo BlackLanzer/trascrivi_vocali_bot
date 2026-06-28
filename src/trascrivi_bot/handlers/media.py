@@ -14,7 +14,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..keyboards import stop_streaming_keyboard, summarize_keyboard
-from ..security import is_admin, require_auth
+from ..security import is_admin, require_auth, settings_key
 from ..services import get_services
 from ..transcription.base import Transcriber, TranscriptionConfig
 
@@ -89,7 +89,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     services = get_services(context)
     transcriber = services.transcriber
     db = services.db
-    user_settings = db.get_settings(user.id)
+    # Group chats share one settings row (keyed by chat id); private chats use
+    # the user's own. ``settings_key`` is non-None because ``user`` is set.
+    key = settings_key(update)
+    if key is None:
+        return
+    user_settings = db.get_settings(key)
     config = TranscriptionConfig(
         model=user_settings.model, language=user_settings.language
     )

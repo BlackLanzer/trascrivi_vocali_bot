@@ -11,6 +11,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..keyboards import (
+    describe_group,
     describe_user,
     language_keyboard,
     main_settings_keyboard,
@@ -19,7 +20,7 @@ from ..keyboards import (
 )
 from ..handlers.media import ACTIVE_STREAMS_KEY
 from ..models import AccessStatus
-from ..security import is_admin, is_authorized
+from ..security import is_admin, is_update_authorized, settings_key
 from ..services import get_services
 
 logger = logging.getLogger(__name__)
@@ -37,13 +38,16 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     await query.answer()
 
-    if not is_authorized(context, user.id):
+    if not is_update_authorized(context, update):
         await query.edit_message_text("Non sei autorizzato.")
         return
 
     services = get_services(context)
     db = services.db
     transcriber = services.transcriber
+    key = settings_key(update)
+    if key is None:
+        return
     data = query.data
 
     if data == "menu:close":
@@ -52,7 +56,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if data == "menu:model":
-        user_settings = db.get_settings(user.id)
+        user_settings = db.get_settings(key)
         await query.edit_message_text(
             "Scegli il modello:",
             reply_markup=model_keyboard(user_settings, transcriber),
@@ -60,7 +64,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if data == "menu:lang":
-        user_settings = db.get_settings(user.id)
+        user_settings = db.get_settings(key)
         await query.edit_message_text(
             "Scegli la lingua:",
             reply_markup=language_keyboard(user_settings, transcriber),
@@ -68,7 +72,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if data == "menu:summodel" and services.summarizer is not None:
-        user_settings = db.get_settings(user.id)
+        user_settings = db.get_settings(key)
         await query.edit_message_text(
             "Scegli il modello per il riassunto:",
             reply_markup=summary_model_keyboard(user_settings, services.summarizer),
@@ -76,7 +80,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if data == "menu:main":
-        await _show_main_menu(query, services, user.id)
+        await _show_main_menu(query, services, key)
         return
 
     # data is "set:<field>:<value>"
@@ -84,14 +88,14 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if len(parts) == 3 and parts[0] == "set":
         _, field, value = parts
         if field == "model":
-            db.update_setting(user.id, "model", value)
+            db.update_setting(key, "model", value)
         elif field == "lang":
-            db.update_setting(user.id, "language", value)
+            db.update_setting(key, "language", value)
         elif field == "stream":
-            db.update_setting(user.id, "streaming", value == "1")
+            db.update_setting(key, "streaming", value == "1")
         elif field == "summodel":
-            db.update_setting(user.id, "summary_model", value)
-        await _show_main_menu(query, services, user.id)
+            db.update_setting(key, "summary_model", value)
+        await _show_main_menu(query, services, key)
 
 
 async def access_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -144,6 +148,56 @@ async def access_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await context.bot.send_message(chat_id=target_id, text=user_text)
 
 
+async def group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle group approve/deny buttons (``grp:approve:<id>`` / ``grp:deny:<id>``)."""
+
+    query = update.callback_query
+    admin = update.effective_user
+    if query is None or admin is None or query.data is None:
+        return
+    await query.answer()
+
+    if not is_admin(context, admin.id):
+        await query.edit_message_text("Solo gli amministratori possono decidere.")
+        return
+
+    parts = query.data.split(":", 2)
+    if len(parts) != 3:
+        return
+    _, action, raw_id = parts
+    try:
+        chat_id = int(raw_id)
+    except ValueError:
+        return
+
+    services = get_services(context)
+    group = services.db.get_group(chat_id)
+    if group is None:
+        await query.edit_message_text("Gruppo non più disponibile.")
+        return
+
+    if action == "approve":
+        services.db.set_group_status(chat_id, AccessStatus.APPROVED, admin.id)
+        await query.edit_message_text(f"✅ Gruppo abilitato: {describe_group(group)}")
+        group_text = (
+            "✅ Questo gruppo è stato abilitato: invierò la trascrizione dei "
+            "messaggi vocali."
+        )
+    elif action == "deny":
+        services.db.set_group_status(chat_id, AccessStatus.DENIED, admin.id)
+        await query.edit_message_text(f"❌ Gruppo rifiutato: {describe_group(group)}")
+        group_text = ""
+    else:
+        return
+
+    logger.info(
+        "group decision chat=%s action=%s by_admin=%s", chat_id, action, admin.id
+    )
+    if group_text:
+        with suppress(TelegramError):
+            await context.bot.send_message(chat_id=chat_id, text=group_text)
+
+
 async def stop_streaming_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -183,7 +237,7 @@ async def summarize_callback(
     await query.answer()
 
     message = query.message
-    if not isinstance(message, Message) or not is_authorized(context, user.id):
+    if not isinstance(message, Message) or not is_update_authorized(context, update):
         return
 
     services = get_services(context)
@@ -207,7 +261,10 @@ async def summarize_callback(
         return
 
     placeholder = await message.reply_text("📝 Riassumo…", disable_notification=True)
-    summary_model = services.db.get_settings(user.id).summary_model
+    key = settings_key(update)
+    summary_model = services.db.get_settings(
+        key if key is not None else user.id
+    ).summary_model
     try:
         summary = await summarizer.summarize(
             cached.text, summary_model, cached.language
