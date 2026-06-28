@@ -13,7 +13,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import AccessRecord, AccessStatus, UserSettings
+from .models import AccessRecord, AccessStatus, CachedTranscript, UserSettings
 
 
 def _utcnow() -> str:
@@ -67,6 +67,19 @@ class Database:
                     model     TEXT NOT NULL,
                     language  TEXT NOT NULL,
                     streaming INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS transcripts (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_unique_id TEXT NOT NULL,
+                    model          TEXT NOT NULL,
+                    language       TEXT NOT NULL,
+                    text           TEXT NOT NULL,
+                    audio_path     TEXT,
+                    duration       REAL,
+                    request_id     TEXT,
+                    created_at     TEXT NOT NULL,
+                    UNIQUE(file_unique_id, model, language)
                 );
                 """
             )
@@ -148,6 +161,99 @@ class Database:
             ).fetchall()
         return [_row_to_access(row) for row in rows]
 
+    # -- transcript cache -------------------------------------------------
+
+    def get_cached_transcript(
+        self, file_unique_id: str, model: str, language: str
+    ) -> CachedTranscript | None:
+        """Return a cached transcript for this (file, model, language), if any."""
+
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM transcripts
+                 WHERE file_unique_id = ? AND model = ? AND language = ?
+                """,
+                (file_unique_id, model, language),
+            ).fetchone()
+        return _row_to_transcript(row) if row is not None else None
+
+    def get_transcript(self, transcript_id: int) -> CachedTranscript | None:
+        """Return a cached transcript by its row id, or ``None`` if absent."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM transcripts WHERE id = ?", (transcript_id,)
+            ).fetchone()
+        return _row_to_transcript(row) if row is not None else None
+
+    def store_transcript(
+        self,
+        *,
+        file_unique_id: str,
+        model: str,
+        language: str,
+        text: str,
+        audio_path: str | None,
+        duration: float | None,
+        request_id: str | None,
+    ) -> int:
+        """Insert (or replace) a cached transcript and return its row id."""
+
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                INSERT INTO transcripts
+                    (file_unique_id, model, language, text, audio_path,
+                     duration, request_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_unique_id, model, language) DO UPDATE SET
+                    text = excluded.text,
+                    audio_path = excluded.audio_path,
+                    duration = excluded.duration,
+                    request_id = excluded.request_id,
+                    created_at = excluded.created_at
+                """,
+                (
+                    file_unique_id,
+                    model,
+                    language,
+                    text,
+                    audio_path,
+                    duration,
+                    request_id,
+                    _utcnow(),
+                ),
+            )
+            self._conn.commit()
+            # lastrowid is unreliable on the UPDATE branch; look the row up.
+            row = self._conn.execute(
+                """
+                SELECT id FROM transcripts
+                 WHERE file_unique_id = ? AND model = ? AND language = ?
+                """,
+                (file_unique_id, model, language),
+            ).fetchone()
+        return int(row["id"])
+
+    def delete_transcripts_older_than(self, cutoff_iso: str) -> list[str]:
+        """Delete transcripts created before ``cutoff_iso``.
+
+        Returns the ``audio_path`` values of the deleted rows (non-null only) so
+        the caller can remove the cached audio files from disk.
+        """
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT audio_path FROM transcripts WHERE created_at < ?",
+                (cutoff_iso,),
+            ).fetchall()
+            self._conn.execute(
+                "DELETE FROM transcripts WHERE created_at < ?", (cutoff_iso,)
+            )
+            self._conn.commit()
+        return [row["audio_path"] for row in rows if row["audio_path"]]
+
     # -- per-user settings ------------------------------------------------
 
     def get_settings(self, user_id: int) -> UserSettings:
@@ -216,6 +322,20 @@ def _row_to_access(row: sqlite3.Row) -> AccessRecord:
         requested_at=row["requested_at"],
         decided_at=row["decided_at"],
         decided_by=row["decided_by"],
+    )
+
+
+def _row_to_transcript(row: sqlite3.Row) -> CachedTranscript:
+    return CachedTranscript(
+        id=row["id"],
+        file_unique_id=row["file_unique_id"],
+        model=row["model"],
+        language=row["language"],
+        text=row["text"],
+        audio_path=row["audio_path"],
+        duration=row["duration"],
+        request_id=row["request_id"],
+        created_at=row["created_at"],
     )
 
 

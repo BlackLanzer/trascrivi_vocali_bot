@@ -37,3 +37,22 @@ class UserSettings:
     language: str
     streaming: bool
     debug: bool
+
+
+@dataclass(slots=True)
+class CachedTranscript:
+    """A cached transcription (a row of the ``transcripts`` table).
+
+    Keyed by (``file_unique_id``, ``model``, ``language``): re-sending the same
+    audio with the same settings reuses the result instead of re-billing.
+    """
+
+    id: int
+    file_unique_id: str
+    model: str
+    language: str
+    text: str
+    audio_path: str | None = None
+    duration: float | None = None
+    request_id: str | None = None
+    created_at: str | None = None

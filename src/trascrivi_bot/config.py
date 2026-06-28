@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     # fallback when the selected model has no per-model price.
     deepgram_price_per_minute: float = 0.0043
 
+    # Audio + transcript cache. Re-sending the same audio with the same model
+    # and language reuses the stored transcript instead of re-billing. A
+    # background task removes entries (and their cached audio) older than the
+    # retention window.
+    cache_dir: Path = Path("data/cache")
+    cache_retention_days: int = 7
+    cache_cleanup_interval_hours: int = 6
+
     # Logging. Logs go both to stdout (for ``docker compose logs``) and to a
     # rotating file under ``log_dir``.
     log_level: str = "INFO"

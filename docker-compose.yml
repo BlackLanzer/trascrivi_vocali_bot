@@ -6,7 +6,8 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
-      # Persist the SQLite database and the admins file across rebuilds.
+      # Persist the SQLite database, the audio/transcript cache (data/cache)
+      # and rotating logs (data/logs) plus the admins file across rebuilds.
       - ./data:/app/data
       - ./config:/app/config
     # Polling mode needs no inbound ports.

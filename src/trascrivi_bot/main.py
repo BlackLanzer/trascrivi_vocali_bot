@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import logging.handlers
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from telegram.error import TelegramError
@@ -24,6 +27,9 @@ from .services import SERVICES_KEY, Services, get_services_from_bot_data
 from .transcription.factory import get_transcriber
 
 logger = logging.getLogger(__name__)
+
+# Handle (in ``bot_data``) for the background cache-cleanup task.
+_CLEANUP_TASK_KEY = "cache_cleanup_task"
 
 # Commands shown when typing "/" — base set for every user.
 _USER_COMMANDS = [
@@ -77,8 +83,50 @@ def _configure_logging(settings: Settings) -> None:
     root.handlers = [stream_handler, file_handler]
 
 
+def _cleanup_expired_cache(
+    db: Database, cache_dir: Path, retention_days: int
+) -> None:
+    """Remove cached transcripts (and their audio) older than the retention."""
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    removed = db.delete_transcripts_older_than(cutoff.isoformat())
+    for raw_path in removed:
+        with suppress(OSError):
+            Path(raw_path).unlink(missing_ok=True)
+
+    # Sweep orphan audio files (e.g. left by a crash before the DB row landed).
+    orphans = 0
+    if cache_dir.exists():
+        cutoff_ts = cutoff.timestamp()
+        for entry in cache_dir.iterdir():
+            with suppress(OSError):
+                if entry.is_file() and entry.stat().st_mtime < cutoff_ts:
+                    entry.unlink()
+                    orphans += 1
+
+    logger.info(
+        "cache cleanup: removed %d expired transcripts, %d orphan files",
+        len(removed),
+        orphans,
+    )
+
+
+async def _cache_cleanup_loop(application: Application) -> None:
+    """Periodically prune the cache for the lifetime of the application."""
+
+    services = get_services_from_bot_data(application.bot_data)
+    settings = services.settings
+    interval = max(1, settings.cache_cleanup_interval_hours) * 3600
+    while True:
+        with suppress(Exception):
+            _cleanup_expired_cache(
+                services.db, settings.cache_dir, settings.cache_retention_days
+            )
+        await asyncio.sleep(interval)
+
+
 async def _post_init(application: Application) -> None:
-    """Register the command list with Telegram so it appears under "/".
+    """Register the command list with Telegram and start the cleanup task.
 
     Base commands go to the default scope (all users); the full admin set is
     scoped to each admin's private chat. Per-admin calls are best-effort: they
@@ -94,6 +142,22 @@ async def _post_init(application: Application) -> None:
             await application.bot.set_my_commands(
                 _ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id)
             )
+
+    # APScheduler isn't installed, so application.job_queue is None; run the
+    # periodic cache cleanup as a plain background task instead.
+    application.bot_data[_CLEANUP_TASK_KEY] = asyncio.create_task(
+        _cache_cleanup_loop(application)
+    )
+
+
+async def _post_shutdown(application: Application) -> None:
+    """Cancel the background cache-cleanup task on shutdown."""
+
+    task = application.bot_data.get(_CLEANUP_TASK_KEY)
+    if isinstance(task, asyncio.Task):
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 def build_application(settings: Settings) -> Application:
@@ -123,6 +187,7 @@ def build_application(settings: Settings) -> Application:
         ApplicationBuilder()
         .token(settings.telegram_bot_token)
         .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
         .build()
     )
     application.bot_data[SERVICES_KEY] = services
