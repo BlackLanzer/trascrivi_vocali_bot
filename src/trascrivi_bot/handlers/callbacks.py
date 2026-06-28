@@ -119,6 +119,13 @@ async def access_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         return
 
+    logger.info(
+        "access decision (callback) target=%s action=%s by_admin=%s",
+        target_id,
+        action,
+        admin.id,
+    )
+
     with suppress(TelegramError):
         await context.bot.send_message(chat_id=target_id, text=user_text)
 

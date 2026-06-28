@@ -136,20 +136,42 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await placeholder.edit_text(_DONE_TEXT)
     await _send_transcript(message, final_text)
 
-    # 5) Admin debug report: an ESTIMATED request cost, sent only to admins who
+    # 5) Estimate cost (used for both the structured server log and the admin
+    #    debug report). Prefer Deepgram's reported duration (pre-recorded);
+    #    otherwise fall back to the Telegram media duration, always present.
+    tg_duration = media.duration
+    fallback = (
+        tg_duration.total_seconds()
+        if isinstance(tg_duration, timedelta)
+        else float(tg_duration)
+    )
+    duration = audio_duration if audio_duration is not None else fallback
+    rate = services.settings.deepgram_price_per_minute
+    cost = (duration / 60.0) * rate
+
+    # Structured per-request log line for server-side observability.
+    chat = update.effective_chat
+    chat_kind = chat.type if chat is not None else "?"
+    chat_id = chat.id if chat is not None else "?"
+    logger.info(
+        "transcription user=%s chat=%s/%s file=%s model=%s lang=%s mode=%s "
+        "duration=%.0fs elapsed=%.1fs cost=$%.4f request_id=%s",
+        user.id,
+        chat_kind,
+        chat_id,
+        media.file_unique_id,
+        user_settings.model,
+        user_settings.language,
+        "streaming" if use_streaming else "pre-recorded",
+        duration,
+        elapsed,
+        cost,
+        request_id,
+    )
+
+    # 6) Admin debug report: an ESTIMATED request cost, sent only to admins who
     #    enabled debug mode via /debug.
     if user_settings.debug and is_admin(context, user.id):
-        # Prefer Deepgram's reported duration (pre-recorded); otherwise fall
-        # back to the Telegram media duration, which is always present.
-        tg_duration = media.duration
-        fallback = (
-            tg_duration.total_seconds()
-            if isinstance(tg_duration, timedelta)
-            else float(tg_duration)
-        )
-        duration = audio_duration if audio_duration is not None else fallback
-        rate = services.settings.deepgram_price_per_minute
-        cost = (duration / 60.0) * rate
         lines = [
             "🔧 Debug",
             f"Modello: {user_settings.model} | Lingua: {user_settings.language}",

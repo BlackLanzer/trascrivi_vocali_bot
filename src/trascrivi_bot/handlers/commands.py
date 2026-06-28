@@ -56,6 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     services.db.create_request(user.id, user.username, user.first_name)
+    logger.info("access request filed user=%s username=%s", user.id, user.username)
     await message.reply_text(
         "Richiesta di accesso inviata. ✅\n"
         "Un amministratore la esaminerà al più presto."
@@ -366,6 +367,13 @@ async def _decide_via_command(
         return
 
     services.db.set_status(target_id, status, decided_by=admin.id)
+    logger.info(
+        "access decision target=%s status=%s revoke=%s by_admin=%s",
+        target_id,
+        status.value,
+        revoke,
+        admin.id,
+    )
 
     if revoke:
         admin_text = f"Accesso revocato a {describe_user(record)}."

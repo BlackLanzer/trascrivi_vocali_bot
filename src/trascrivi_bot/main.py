@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 from contextlib import suppress
 
 from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
@@ -44,6 +45,36 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("revoke", "Revoca l'accesso: /revoke <id>"),
     BotCommand("debug", "Attiva/disattiva il report di costo stimato"),
 ]
+
+
+def _configure_logging(settings: Settings) -> None:
+    """Send logs to stdout and to a rotating file under ``settings.log_dir``.
+
+    The stdout handler keeps ``docker compose logs`` useful; the rotating file
+    handler keeps history across restarts. Level comes from ``LOG_LEVEL``.
+    """
+
+    settings.log_dir.mkdir(parents=True, exist_ok=True)
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        settings.log_dir / "bot.log",
+        maxBytes=settings.log_max_bytes,
+        backupCount=settings.log_backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+
+    root.handlers = [stream_handler, file_handler]
 
 
 async def _post_init(application: Application) -> None:
@@ -131,11 +162,8 @@ def build_application(settings: Settings) -> Application:
 
 
 def main() -> None:
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        level=logging.INFO,
-    )
     settings = get_settings()
+    _configure_logging(settings)
 
     if settings.run_mode != "polling":
         raise SystemExit(

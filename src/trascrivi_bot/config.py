@@ -43,8 +43,16 @@ class Settings(BaseSettings):
     default_streaming: bool = False
 
     # Per-minute rate used only for the admin /debug cost estimate. The Deepgram
-    # API does not return a price, so this is a configurable estimate.
+    # API does not return a price, so this is a configurable estimate. Acts as a
+    # fallback when the selected model has no per-model price.
     deepgram_price_per_minute: float = 0.0043
+
+    # Logging. Logs go both to stdout (for ``docker compose logs``) and to a
+    # rotating file under ``log_dir``.
+    log_level: str = "INFO"
+    log_dir: Path = Path("data/logs")
+    log_max_bytes: int = 5_000_000
+    log_backup_count: int = 5
 
 
 @lru_cache
