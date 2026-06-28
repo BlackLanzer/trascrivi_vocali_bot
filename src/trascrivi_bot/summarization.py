@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 # are picked for a good quality/price ratio on multilingual summaries.
 _SUMMARY_MODELS = [
     ModelOption("deepseek/deepseek-chat", "DeepSeek (economico)"),
-    ModelOption("google/gemini-2.5-flash", "Gemini Flash"),
-    ModelOption("anthropic/claude-3.5-haiku", "Claude Haiku"),
     ModelOption("openai/gpt-4o-mini", "GPT mini"),
+    ModelOption("google/gemini-2.5-flash", "Gemini Flash"),
+    ModelOption("anthropic/claude-haiku-4.5", "Claude Haiku"),
 ]
 
 # Human-readable language names for the prompt (falls back to the raw code).
