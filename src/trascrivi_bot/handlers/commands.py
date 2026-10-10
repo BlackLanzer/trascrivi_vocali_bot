@@ -9,6 +9,7 @@ from telegram import Update, User
 from telegram.constants import ChatMemberStatus
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
+from telegram.helpers import escape_markdown
 
 from ..keyboards import (
     access_request_keyboard,
@@ -193,7 +194,7 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     value = context.args[0]
     if not any(option.value == value for option in options):
         await message.reply_text(
-            f"Modello non valido: `{value}`\n\n"
+            f"Modello non valido: `{escape_markdown(value, version=1)}`\n\n"
             "Valori disponibili:\n" + _format_options(options),
             parse_mode="Markdown",
         )
@@ -234,7 +235,7 @@ async def language_command(
     value = context.args[0]
     if not any(option.value == value for option in options):
         await message.reply_text(
-            f"Lingua non valida: `{value}`\n\n"
+            f"Lingua non valida: `{escape_markdown(value, version=1)}`\n\n"
             "Codici disponibili:\n" + _format_options(options),
             parse_mode="Markdown",
         )
@@ -364,7 +365,10 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await message.reply_text("Nessun utente approvato.")
         return
     lines = ["*Utenti approvati*"]
-    lines += [f"• {describe_user(record)}" for record in approved]
+    lines += [
+        f"• {escape_markdown(describe_user(record), version=1)}"
+        for record in approved
+    ]
     await message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -387,7 +391,9 @@ async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if approved:
         lines = ["*Gruppi abilitati*"]
-        lines += [f"• {describe_group(g)}" for g in approved]
+        lines += [
+            f"• {escape_markdown(describe_group(g), version=1)}" for g in approved
+        ]
         await message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     if pending:
@@ -474,7 +480,7 @@ async def _decide_via_command(
 def _format_options(options: list[ModelOption] | list[LanguageOption]) -> str:
     """Render an option list, one per line, as "`value` – label"."""
 
-    return "\n".join(f"`{option.value}` – {option.label}" for option in options)
+    return "\n".join(f"`{option.value}` – {escape_markdown(option.label, version=1)}" for option in options)
 
 
 async def _notify_admins_new_request(
